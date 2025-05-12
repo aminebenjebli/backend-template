@@ -24,8 +24,28 @@ export class AuthService {
         if (!isPasswordValid)
             throw new UnauthorizedException('Invalid credentials');
 
-        if (!user.isVerified)
-            throw new UnauthorizedException('User Not Verified');
+        if (!user.isVerified) {
+            // Generate and send new OTP for unverified users
+            const otp = Math.floor(1000 + Math.random() * 9000).toString();
+            await this.prisma.user.update({
+                where: { email },
+                data: {
+                    otpCode: otp,
+                    otpCodeExpiresAt: new Date(Date.now() + 15 * 60 * 1000),
+                }
+            });
+
+            await this.mailerService.sendMail({
+                to: email,
+                subject: 'Verify your account',
+                template: 'verify-account',
+                context: {
+                    otp
+                }
+            });
+
+            throw new UnauthorizedException('Please verify your account. A new verification code has been sent to your email.');
+        }
 
         const token = this.jwtService.sign(
             {
@@ -105,12 +125,15 @@ export class AuthService {
         const user = await this.prisma.user.findFirst({
             where: {
                 email: otpDto.email,
-                otpCode: otpDto.otpCode
+                otpCode: otpDto.otpCode,
+                otpCodeExpiresAt: {
+                    gt: new Date()
+                }
             }
         });
-        if (!user) throw new UnauthorizedException('Invalid OTP');
+        if (!user) throw new UnauthorizedException('Invalid or expired OTP');
 
-        return this.prisma.user.update({
+        const updatedUser = await this.prisma.user.update({
             where: { email: otpDto.email },
             data: {
                 otpCode: null,
@@ -118,6 +141,33 @@ export class AuthService {
                 isVerified: true
             }
         });
+
+        // Generate and return tokens after successful verification
+        const token = this.jwtService.sign(
+            {
+                id: updatedUser.id,
+                name: updatedUser.name,
+                email: updatedUser.email,
+                image: updatedUser.image
+            },
+            {
+                expiresIn: '1d'
+            }
+        );
+
+        const refreshToken = this.jwtService.sign(
+            {
+                id: updatedUser.id,
+                name: updatedUser.name,
+                email: updatedUser.email,
+                image: updatedUser.image
+            },
+            {
+                expiresIn: '7d'
+            }
+        );
+
+        return { token, refreshToken };
     }
 
     async resendOtp(email: string) {

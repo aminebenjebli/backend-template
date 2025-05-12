@@ -13,7 +13,6 @@ model User {
   name             String
   password         String
   image            String?
-  isVerified       Boolean   @default(false)
   otpCode          String?
   otpCodeExpiresAt DateTime?
 }

@@ -19,8 +19,7 @@ export class UserService extends BaseService<
         return this.prismaService.user.create({
             data: {
                 ...createDto,
-                password: await cryptPassword(createDto.password),
-                isVerified: false
+                password: await cryptPassword(createDto.password)
             }
         });
     }
