@@ -31,7 +31,7 @@ export class AuthService {
                 where: { email },
                 data: {
                     otpCode: otp,
-                    otpCodeExpiresAt: new Date(Date.now() + 15 * 60 * 1000),
+                    otpCodeExpiresAt: new Date(Date.now() + 15 * 60 * 1000)
                 }
             });
 
@@ -44,7 +44,9 @@ export class AuthService {
                 }
             });
 
-            throw new UnauthorizedException('Please verify your account. A new verification code has been sent to your email.');
+            throw new UnauthorizedException(
+                'Please verify your account. A new verification code has been sent to your email.'
+            );
         }
 
         const token = this.jwtService.sign(
