@@ -9,6 +9,7 @@ import { PrismaService } from './core/services/prisma.service';
 import { AuthModule } from './modules/auth/auth.module';
 import { FileUploadModule } from './modules/file-upload/file-upload.module';
 import { UserModule } from './modules/user/user.module';
+import { mailerConfig } from './config/mailer.config';
 
 @Module({
     imports: [
@@ -45,7 +46,7 @@ import { UserModule } from './modules/user/user.module';
                     }
                 },
                 defaults: {
-                    from: `"No Reply" <${config.get<string>('EMAIL_FROM')}>`
+                    from: `"BOM" <${config.get<string>('EMAIL_FROM')}>`
                 },
                 template: {
                     dir: join(__dirname, 'templates'),
@@ -54,30 +55,7 @@ import { UserModule } from './modules/user/user.module';
             })
         }),
 
-        MailerModule.forRoot({
-            transport: {
-                host: process.env.EMAIL_HOST,
-                port: parseInt(process.env.EMAIL_PORT),
-                secure: false,
-                auth: {
-                    user: process.env.EMAIL_USER,
-                    pass: process.env.EMAIL_PASSWORD
-                },
-                tls: {
-                    ciphers: 'SSLv3'
-                }
-            },
-            defaults: {
-                from: process.env.EMAIL_FROM
-            },
-            template: {
-                dir: join(__dirname, 'templates'),
-                adapter: new HandlebarsAdapter(),
-                options: {
-                    strict: true
-                }
-            }
-        }),
+        MailerModule.forRoot(mailerConfig),
 
         FileUploadModule,
         AuthModule,

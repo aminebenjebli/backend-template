@@ -14,6 +14,42 @@ export class AuthService {
         private readonly mailerService: MailerService
     ) {}
 
+    private async generateAndSendOtp(
+        email: string,
+        purpose: 'verification' | 'reset' = 'verification'
+    ) {
+        const otp = Math.floor(1000 + Math.random() * 9000).toString();
+        const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+
+        await this.prisma.user.update({
+            where: { email },
+            data: {
+                otpCode: otp,
+                otpCodeExpiresAt: expiresAt
+            }
+        });
+
+        try {
+            await this.mailerService.sendMail({
+                to: email,
+                subject:
+                    purpose === 'verification'
+                        ? '🎉 Welcome to Business Opportunity Match - Verify Your Account'
+                        : '🔐 Reset Your Password - Business Opportunity Match',
+                template: `./${purpose === 'verification' ? 'verify-account' : 'reset-password'}`,
+                context: {
+                    otp,
+                    code: otp
+                }
+            });
+        } catch (error) {
+            console.error('Email sending error:', error);
+            throw new Error('Failed to send email');
+        }
+
+        return otp;
+    }
+
     async signIn(credentials: LoginDto) {
         const { email, password } = credentials;
 
@@ -25,25 +61,7 @@ export class AuthService {
             throw new UnauthorizedException('Invalid credentials');
 
         if (!user.isVerified) {
-            // Generate and send new OTP for unverified users
-            const otp = Math.floor(1000 + Math.random() * 9000).toString();
-            await this.prisma.user.update({
-                where: { email },
-                data: {
-                    otpCode: otp,
-                    otpCodeExpiresAt: new Date(Date.now() + 15 * 60 * 1000)
-                }
-            });
-
-            await this.mailerService.sendMail({
-                to: email,
-                subject: 'Verify your account',
-                template: 'verify-account',
-                context: {
-                    otp
-                }
-            });
-
+            await this.generateAndSendOtp(email, 'verification');
             throw new UnauthorizedException(
                 'Please verify your account. A new verification code has been sent to your email.'
             );
@@ -94,25 +112,7 @@ export class AuthService {
         const user = await this.prisma.user.findUnique({ where: { email } });
         if (!user) throw new UnauthorizedException('User not found');
 
-        const code = Math.floor(1000 + Math.random() * 9000).toString();
-        const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
-
-        await this.prisma.user.update({
-            where: { email },
-            data: {
-                otpCode: code,
-                otpCodeExpiresAt: expiresAt
-            }
-        });
-
-        await this.mailerService.sendMail({
-            to: user.email,
-            subject: 'Reset password',
-            template: 'reset-password',
-            context: {
-                code
-            }
-        });
+        await this.generateAndSendOtp(email, 'reset');
     }
 
     async resetPassword(email: string, newPassword: string): Promise<void> {
@@ -176,16 +176,7 @@ export class AuthService {
         const user = await this.prisma.user.findUnique({ where: { email } });
         if (!user) throw new UnauthorizedException('User not found');
 
-        const otp = Math.floor(1000 + Math.random() * 9000).toString();
-
-        await this.mailerService.sendMail({
-            to: email,
-            subject: 'Verify your email',
-            template: 'verify-account',
-            context: {
-                otp
-            }
-        });
+        const otp = await this.generateAndSendOtp(email, 'verification');
 
         return this.prisma.user.update({
             where: { email },
