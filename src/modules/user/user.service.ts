@@ -23,4 +23,14 @@ export class UserService extends BaseService<
             }
         });
     }
+    async update(id: string, updateDto: UpdateUserDto): Promise<User> {
+        const { password, ...rest } = updateDto;
+        return this.prismaService.user.update({
+            where: { id },
+            data: {
+                ...rest,
+                ...(password && { password: await cryptPassword(password) })
+            }
+        });
+    }
 }

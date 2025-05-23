@@ -5,6 +5,7 @@ import { PrismaService } from '../../core/services/prisma.service';
 import { comparePassword, cryptPassword } from '../../core/utils/auth';
 import { LoginDto } from './dto/login.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
+import { User } from '@prisma/client';
 
 @Injectable()
 export class AuthService {
@@ -50,6 +51,20 @@ export class AuthService {
         return otp;
     }
 
+    private generateTokens(user: User) {
+        const payload = {
+            id: user.id,
+            name: user.name,
+            email: user.email,
+            image: user.image
+        };
+
+        const token = this.jwtService.sign(payload, { expiresIn: '1d' });
+        const refreshToken = this.jwtService.sign(payload, { expiresIn: '7d' });
+
+        return { token, refreshToken };
+    }
+
     async signIn(credentials: LoginDto) {
         const { email, password } = credentials;
 
@@ -67,31 +82,7 @@ export class AuthService {
             );
         }
 
-        const token = this.jwtService.sign(
-            {
-                id: user.id,
-                name: user.name,
-                email: user.email,
-                image: user.image
-            },
-            {
-                expiresIn: '1d'
-            }
-        );
-
-        const refreshToken = this.jwtService.sign(
-            {
-                id: user.id,
-                name: user.name,
-                email: user.email,
-                image: user.image
-            },
-            {
-                expiresIn: '7d'
-            }
-        );
-
-        return { token, refreshToken };
+        return this.generateTokens(user);
     }
 
     async refreshToken(refreshToken: string) {
@@ -144,47 +135,29 @@ export class AuthService {
             }
         });
 
-        // Generate and return tokens after successful verification
-        const token = this.jwtService.sign(
-            {
-                id: updatedUser.id,
-                name: updatedUser.name,
-                email: updatedUser.email,
-                image: updatedUser.image
-            },
-            {
-                expiresIn: '1d'
-            }
-        );
-
-        const refreshToken = this.jwtService.sign(
-            {
-                id: updatedUser.id,
-                name: updatedUser.name,
-                email: updatedUser.email,
-                image: updatedUser.image
-            },
-            {
-                expiresIn: '7d'
-            }
-        );
-
-        return { token, refreshToken };
+        return this.generateTokens(updatedUser);
     }
 
     async resendOtp(email: string) {
-        const user = await this.prisma.user.findUnique({ where: { email } });
-        if (!user) throw new UnauthorizedException('User not found');
-
-        const otp = await this.generateAndSendOtp(email, 'verification');
-
-        return this.prisma.user.update({
-            where: { email },
-            data: {
-                otpCode: otp,
-                otpCodeExpiresAt: new Date(Date.now() + 15 * 60 * 1000),
-                isVerified: false
-            }
+        if (!email) {
+            throw new UnauthorizedException('Email is required');
+        }
+        const user = await this.prisma.user.findUnique({
+            where: { email }
         });
+
+        if (!user) {
+            throw new UnauthorizedException(
+                'No account found with this email address'
+            );
+        }
+
+        // Don't check for verification status since this is part of the verification flow
+        await this.generateAndSendOtp(email, 'verification');
+
+        return {
+            success: true,
+            message: 'A new verification code has been sent to your email'
+        };
     }
 }
