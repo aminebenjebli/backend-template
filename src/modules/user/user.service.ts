@@ -16,21 +16,24 @@ export class UserService extends BaseService<
     }
 
     async create(createDto: CreateUserDto): Promise<User> {
-        return this.prismaService.user.create({
-            data: {
-                ...createDto,
-                password: await cryptPassword(createDto.password)
-            }
-        });
+        const data = {
+            ...createDto,
+            password: await cryptPassword(createDto.password),
+            isVerified: false
+        };
+        return super.create(data);
     }
     async update(id: string, updateDto: UpdateUserDto): Promise<User> {
-        const { password, ...rest } = updateDto;
-        return this.prismaService.user.update({
-            where: { id },
-            data: {
-                ...rest,
-                ...(password && { password: await cryptPassword(password) })
-            }
-        });
+        if (updateDto.password) {
+            // Hash the password before updating
+            updateDto.password = await cryptPassword(updateDto.password);
+        }
+        return super.update(id, updateDto);
+    }
+    async findAll(): Promise<User[]> {
+        return super.findAll();
+    }
+    async findOne(id: string): Promise<User> {
+        return super.findOne(id);
     }
 }
