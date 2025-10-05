@@ -1,6 +1,5 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { CreateUserDto } from '../../modules/user/dto/user.dto';
 
 export class BaseService<
     T,
