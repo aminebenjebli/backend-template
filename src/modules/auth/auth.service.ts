@@ -2,10 +2,17 @@ import { MailerService } from '@nestjs-modules/mailer';
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../../core/services/prisma.service';
-import { comparePassword, cryptPassword } from '../../core/utils/auth';
+import {
+    comparePassword,
+    cryptPassword,
+    handleOtpOperation
+} from '../../core/utils/auth';
 import { LoginDto } from './dto/login.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
-import { User } from '@prisma/client';
+import {
+    EmailSubject,
+    EmailTemplate
+} from 'src/core/constants/email.constants';
 
 @Injectable()
 export class AuthService {
@@ -14,58 +21,6 @@ export class AuthService {
         private readonly jwtService: JwtService,
         private readonly mailerService: MailerService
     ) {}
-
-    private async generateAndSendOtp(
-        email: string,
-        purpose: 'verification' | 'reset' = 'verification'
-    ) {
-        const otp = Math.floor(1000 + Math.random() * 9000).toString();
-        const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
-
-        await this.prisma.user.update({
-            where: { email },
-            data: {
-                otpCode: otp,
-                otpCodeExpiresAt: expiresAt
-            }
-        });
-
-        try {
-            await this.mailerService.sendMail({
-                to: email,
-                subject:
-                    purpose === 'verification'
-                        ? '🎉 Welcome to Business Opportunity Match - Verify Your Account'
-                        : '🔐 Reset Your Password - Business Opportunity Match',
-                template: `./${purpose === 'verification' ? 'verify-account' : 'reset-password'}`,
-                context: {
-                    otp,
-                    code: otp
-                }
-            });
-        } catch (error) {
-            console.error('Email sending error:', error);
-            throw new Error('Failed to send email');
-        }
-
-        return otp;
-    }
-
-    private generateTokens(user: User) {
-        const payload = {
-            id: user.id,
-            name: user.name,
-            email: user.email,
-            image: user.image
-        };
-
-        const token = this.jwtService.sign(payload, { expiresIn: '1d' });
-        const refreshToken = this.jwtService.sign(payload, {
-            expiresIn: '7d'
-        });
-
-        return { token, refreshToken };
-    }
 
     async signIn(credentials: LoginDto) {
         const { email, password } = credentials;
@@ -77,35 +32,169 @@ export class AuthService {
         if (!isPasswordValid)
             throw new UnauthorizedException('Invalid credentials');
 
-        if (!user.isVerified) {
-            await this.generateAndSendOtp(email, 'verification');
+        if (!user.isVerified)
             throw new UnauthorizedException(
-                'Please verify your account. A new verification code has been sent to your email.'
+                'User Not Verified check your email for verification'
+            );
+
+        const token = this.jwtService.sign(
+            {
+                sub: user.id, // Standard JWT subject
+                name: user.name,
+                email: user.email,
+                image: user.image
+            },
+            {
+                expiresIn: '15m'
+            }
+        );
+
+        const refreshToken = this.jwtService.sign(
+            {
+                sub: user.id, // Standard JWT subject
+                name: user.name,
+                email: user.email,
+                image: user.image
+            },
+            {
+                expiresIn: '7d'
+            }
+        );
+
+        return { token, refreshToken };
+    }
+    async refreshToken(refreshToken: string) {
+        try {
+            const { sub } = this.jwtService.verify(refreshToken); // Changed from id to sub
+            const user = await this.prisma.user.findUnique({
+                where: { id: sub }
+            }); // Use sub as user ID
+            if (!user) throw new UnauthorizedException('User not found');
+
+            const token = this.jwtService.sign(
+                {
+                    sub: user.id, // Standard JWT subject
+                    name: user.name,
+                    email: user.email,
+                    image: user.image
+                },
+                {
+                    expiresIn: '15m'
+                }
+            );
+
+            return { token, refreshToken };
+        } catch (error) {
+            console.error('Refresh token error:', error);
+            throw new UnauthorizedException('Invalid refresh token');
+        }
+    }
+    async verifyOtp(otpDto: VerifyOtpDto) {
+        const { email, otpCode, type = 'verify' } = otpDto;
+
+        // First find user by email and OTP without additional conditions
+        const user = await this.prisma.user.findFirst({
+            where: {
+                email,
+                otpCode
+            }
+        });
+
+        if (!user) {
+            throw new UnauthorizedException('Invalid OTP');
+        }
+
+        // Check if OTP has expired
+        if (
+            user.otpCodeExpiresAt &&
+            user.otpCodeExpiresAt < new Date(Date.now())
+        ) {
+            throw new UnauthorizedException(
+                'OTP has expired. Please request a new one.'
             );
         }
 
-        return this.generateTokens(user);
-    }
+        // Handle email verification case
+        if (type === 'verify') {
+            if (user.isVerified) {
+                throw new UnauthorizedException('Email is already verified');
+            }
 
-    async refreshToken(refreshToken: string) {
-        const { id } = this.jwtService.verify(refreshToken);
-        const user = await this.prisma.user.findUnique({ where: { id } });
-        if (!user) throw new UnauthorizedException('User not found');
+            await this.prisma.user.update({
+                where: { email },
+                data: {
+                    otpCode: null,
+                    otpCodeExpiresAt: null,
+                    isVerified: true
+                }
+            });
 
-        const token = this.jwtService.sign({
-            id: user.id,
-            name: user.name,
-            email: user.email,
-            image: user.image
+            return {
+                message: 'Email verified successfully'
+            };
+        }
+
+        // Handle password reset case (type === 'reset')
+        // Only clear the OTP, don't change verification status
+        await this.prisma.user.update({
+            where: { email },
+            data: {
+                otpCode: null,
+                otpCodeExpiresAt: null
+            }
         });
-        return { token, refreshToken };
+
+        return {
+            message: 'OTP verified successfully, proceed with password reset'
+        };
     }
 
+    async resendOtp(email: string, type: 'verify' | 'reset' = 'verify') {
+        if (!email) {
+            throw new UnauthorizedException('Email is required');
+        }
+
+        // Check if user exists
+        const user = await this.prisma.user.findUnique({
+            where: { email }
+        });
+
+        if (!user) {
+            throw new UnauthorizedException('User not found');
+        }
+
+        // For verification type, check if already verified
+        if (type === 'verify' && user.isVerified) {
+            throw new UnauthorizedException('Email already verified');
+        }
+
+        // Choose template and subject based on type
+        const emailOptions =
+            type === 'verify'
+                ? {
+                      template: EmailTemplate.VERIFY_ACCOUNT,
+                      subject: EmailSubject.VERIFY_ACCOUNT
+                  }
+                : {
+                      template: EmailTemplate.RESET_PASSWORD,
+                      subject: EmailSubject.RESET_PASSWORD
+                  };
+
+        await handleOtpOperation(
+            this.prisma,
+            this.mailerService,
+            email,
+            emailOptions
+        );
+    }
     async forgetPassword(email: string): Promise<void> {
         const user = await this.prisma.user.findUnique({ where: { email } });
         if (!user) throw new UnauthorizedException('User not found');
 
-        await this.generateAndSendOtp(email, 'reset');
+        await handleOtpOperation(this.prisma, this.mailerService, email, {
+            template: EmailTemplate.RESET_PASSWORD,
+            subject: EmailSubject.RESET_PASSWORD
+        });
     }
 
     async resetPassword(email: string, newPassword: string): Promise<void> {
@@ -114,52 +203,5 @@ export class AuthService {
             where: { email },
             data: { password: hashedPassword }
         });
-    }
-
-    async verifyOtp(otpDto: VerifyOtpDto) {
-        const user = await this.prisma.user.findFirst({
-            where: {
-                email: otpDto.email,
-                otpCode: otpDto.otpCode,
-                otpCodeExpiresAt: {
-                    gt: new Date()
-                }
-            }
-        });
-        if (!user) throw new UnauthorizedException('Invalid or expired OTP');
-
-        const updatedUser = await this.prisma.user.update({
-            where: { email: otpDto.email },
-            data: {
-                otpCode: null,
-                otpCodeExpiresAt: null,
-                isVerified: true
-            }
-        });
-
-        return this.generateTokens(updatedUser);
-    }
-
-    async resendOtp(email: string) {
-        if (!email) {
-            throw new UnauthorizedException('Email is required');
-        }
-        const user = await this.prisma.user.findUnique({
-            where: { email }
-        });
-
-        if (!user) {
-            throw new UnauthorizedException(
-                'No account found with this email address'
-            );
-        }
-
-        // Don't check for verification status since this is part of the verification flow
-        await this.generateAndSendOtp(email, 'verification');
-
-        return {
-            success: true,
-            message: 'A new verification code has been sent to your email'
-        };
     }
 }

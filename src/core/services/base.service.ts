@@ -1,6 +1,5 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-
 export class BaseService<
     T,
     CreateDTO,

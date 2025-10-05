@@ -1,4 +1,10 @@
-import { IsEmail, IsNotEmpty, IsString } from 'class-validator';
+import {
+    IsEmail,
+    IsIn,
+    IsNotEmpty,
+    IsOptional,
+    IsString
+} from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class VerifyOtpDto {
@@ -12,4 +18,16 @@ export class VerifyOtpDto {
     @IsNotEmpty()
     @ApiProperty()
     otpCode: string;
+    @IsOptional()
+    @IsString()
+    @IsIn(['verify', 'reset'])
+    @ApiProperty({
+        example: 'verify',
+        enum: ['verify', 'reset'],
+        default: 'verify',
+        required: false,
+        description:
+            'Type of verification: verify for email verification, reset for password reset'
+    })
+    type?: 'verify' | 'reset' = 'verify';
 }
